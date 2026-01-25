@@ -2,7 +2,6 @@ package traffic
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -175,36 +174,4 @@ func readUint64File(path string) uint64 {
 		return val
 	}
 	return 0
-}
-
-// GetConnectionType determines connection type from interface name
-func GetConnectionType(iface string) string {
-	if iface == "" {
-		return ""
-	}
-
-	switch {
-	case strings.HasPrefix(iface, "wl"):
-		return "wifi"
-	case strings.HasPrefix(iface, "eth") || strings.HasPrefix(iface, "en"):
-		return "ethernet"
-	case strings.HasPrefix(iface, "usb") || strings.Contains(iface, "usb"):
-		return "usb"
-	default:
-		return "unknown"
-	}
-}
-
-// FormatBytes formats bytes to human readable string
-func FormatBytes(bytes uint64) string {
-	if bytes >= 1024*1024*1024 {
-		return fmt.Sprintf("%.1f GB/s", float64(bytes)/(1024*1024*1024))
-	}
-	if bytes >= 1024*1024 {
-		return fmt.Sprintf("%.1f MB/s", float64(bytes)/(1024*1024))
-	}
-	if bytes >= 1024 {
-		return fmt.Sprintf("%.1f KB/s", float64(bytes)/1024)
-	}
-	return fmt.Sprintf("%d B/s", bytes)
 }

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 
 	"x-network/internal/state"
 
@@ -266,6 +267,47 @@ func (w *Watcher) handleAddressMessage(data []byte, isRemoved bool) {
 			}
 		}
 	})
+
+	// Trigger weather refresh after resume when IPv4 is assigned
+	// NOTE: Only weather is triggered here - it's time-sensitive and network-dependent
+	// Holidays are NOT triggered on resume - they use month-based refresh via timer
+	currentState := w.stateMgr.Get()
+	if currentState.WasResumed &&
+		!currentState.WeatherTriggered &&
+		time.Since(currentState.ResumeTimestamp) < 60*time.Second &&
+		ip != nil && ip.To4() != nil {
+
+		log.Printf("Resume + IPv4 assigned: triggering x-fetch weather")
+		go exec.Command(
+			os.ExpandEnv("$HOME/.local/bin/x-fetch"),
+			"weather", "--reason=resume",
+		).Run()
+
+		// Clear flags
+		w.stateMgr.Update(func(st *state.State) {
+			st.WasResumed = false
+			st.WeatherTriggered = true
+		})
+	}
+
+	// Trigger weather refresh on startup when first IPv4 is assigned
+	// NOTE: Only weather is triggered here - holidays use month-based refresh
+	if currentState.IsStartup &&
+		!currentState.WeatherTriggered &&
+		ip != nil && ip.To4() != nil {
+
+		log.Printf("Startup + IPv4 assigned: triggering x-fetch weather")
+		go exec.Command(
+			os.ExpandEnv("$HOME/.local/bin/x-fetch"),
+			"weather", "--reason=startup",
+		).Run()
+
+		// Clear startup flag
+		w.stateMgr.Update(func(st *state.State) {
+			st.IsStartup = false
+			st.WeatherTriggered = true
+		})
+	}
 
 	// Try to get gateway
 	w.fetchGateway()

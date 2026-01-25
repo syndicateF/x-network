@@ -2,7 +2,9 @@ package iwd
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
@@ -376,6 +378,10 @@ func (c *Client) handleStationChange(props map[string]dbus.Variant) {
 				st.ConnectionState = state.StateDisconnected
 				st.ActiveSSID = ""
 				st.ConnectingSSID = "" // Always clear on disconnected
+				// Reset captive portal guard to allow re-check on reconnect
+				st.LastCaptiveCheckSSID = ""
+				st.CaptivePortalDetected = false
+				st.CaptivePortalURL = ""
 				// Detect authentication failure: connecting -> disconnected
 				if prevState == state.StateConnecting {
 					st.LastError = "Authentication failed"
@@ -421,6 +427,9 @@ func (c *Client) handleStationChange(props map[string]dbus.Variant) {
 	// This ensures active flag and saved flag are up-to-date after connection
 	if v, ok := props["State"]; ok {
 		if stateStr := v.Value().(string); stateStr == "connected" {
+			// Capture SSID for captive portal check
+			connectedSSID := c.stateMgr.Get().ActiveSSID
+
 			go func() {
 				c.refreshKnownNetworks()
 				// Also refresh Networks array so active flag is updated
@@ -429,6 +438,44 @@ func (c *Client) handleStationChange(props map[string]dbus.Variant) {
 					c.stateMgr.Update(func(st *state.State) {
 						st.Networks = networks
 					})
+				}
+
+				// === Captive Portal Auto-Detection ===
+				// Wait for DHCP/routing to settle before checking
+				time.Sleep(2 * time.Second)
+
+				// Get current state for verification
+				st := c.stateMgr.Get()
+
+				// Guards: verify still connected, same SSID, not already checked
+				if st.ConnectionState != state.StateConnected {
+					log.Printf("Captive check skipped: no longer connected")
+					return
+				}
+				if st.ActiveSSID != connectedSSID {
+					log.Printf("Captive check skipped: SSID changed (%s -> %s)", connectedSSID, st.ActiveSSID)
+					return
+				}
+				if st.LastCaptiveCheckSSID == connectedSSID {
+					log.Printf("Captive check skipped: already checked for SSID %s", connectedSSID)
+					return
+				}
+
+				// Perform captive portal check
+				log.Printf("Checking captive portal for SSID: %s", connectedSSID)
+				detected, url := checkCaptivePortal()
+
+				// Update state with results
+				c.stateMgr.Update(func(st *state.State) {
+					st.CaptivePortalDetected = detected
+					st.CaptivePortalURL = url
+					st.LastCaptiveCheckSSID = connectedSSID
+				})
+
+				if detected {
+					log.Printf("Captive portal detected! URL: %s", url)
+				} else {
+					log.Printf("No captive portal detected")
 				}
 			}()
 		}
@@ -973,4 +1020,55 @@ func (c *Client) tryUsbFallback(ifaceName string) {
 		st.UsbTetheringConnected = true
 		st.ConnectionType = "usb"
 	})
+}
+
+// checkCaptivePortal checks for captive portal by HTTP probe
+// Returns detected=true if captive portal is present, with redirect URL if available
+func checkCaptivePortal() (detected bool, url string) {
+	// Use common captive portal detection endpoints
+	endpoints := []string{
+		"http://detectportal.firefox.com/success.txt",
+		"http://www.gstatic.com/generate_204",
+		"http://captive.apple.com/hotspot-detect.html",
+	}
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Capture redirect URL
+			url = req.URL.String()
+			return http.ErrUseLastResponse
+		},
+	}
+
+	for _, endpoint := range endpoints {
+		resp, err := client.Get(endpoint)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		// Check for redirect (captive portal)
+		if resp.StatusCode == 302 || resp.StatusCode == 301 {
+			return true, url
+		}
+
+		// Check content for Firefox endpoint
+		if strings.Contains(endpoint, "firefox") {
+			body, _ := io.ReadAll(resp.Body)
+			if !strings.Contains(string(body), "success") {
+				return true, endpoint
+			}
+		}
+
+		// Check for 204 (Google endpoint)
+		if strings.Contains(endpoint, "generate_204") && resp.StatusCode != 204 {
+			return true, endpoint
+		}
+
+		// Got expected response - no captive portal
+		return false, ""
+	}
+
+	return false, ""
 }

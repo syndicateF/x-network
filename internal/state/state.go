@@ -2,6 +2,7 @@ package state
 
 import (
 	"sync"
+	"time"
 )
 
 // ConnectionState represents WiFi connection state
@@ -58,9 +59,10 @@ type State struct {
 
 	// Features
 	AirplaneMode          bool
-	CaptivePortalDetected bool
-	CaptivePortalURL      string
-	HotspotActive         bool
+	CaptivePortalDetected  bool
+	CaptivePortalURL       string
+	LastCaptiveCheckSSID   string // Guard: last SSID checked for captive portal (reset on disconnect)
+	HotspotActive          bool
 	HotspotSSID           string
 
 	// Connection type
@@ -75,6 +77,14 @@ type State struct {
 
 	// Error reporting
 	LastError string // Last error message for UI feedback
+
+	// Resume tracking for weather refresh (internal, not exposed via D-Bus)
+	WasResumed       bool      // Set by PrepareForSleep(false)
+	ResumeTimestamp  time.Time // When resume happened
+	WeatherTriggered bool      // Dedup: prevent double trigger
+
+	// Startup tracking - trigger weather on first network connection at boot
+	IsStartup bool // Set true at daemon start, cleared after first weather trigger
 }
 
 // Manager manages state with thread-safe access
