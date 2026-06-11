@@ -55,6 +55,8 @@ func (s *Service) Get(iface, propName string) (dbus.Variant, *dbus.Error) {
 		return dbus.MakeVariant(st.AirplaneMode), nil
 	case "CaptivePortalDetected":
 		return dbus.MakeVariant(st.CaptivePortalDetected), nil
+	case "CaptivePortalURL":
+		return dbus.MakeVariant(st.CaptivePortalURL), nil
 	case "HotspotActive":
 		return dbus.MakeVariant(st.HotspotActive), nil
 	case "ConnectionType":
@@ -105,6 +107,7 @@ func (s *Service) GetAll(iface string) (map[string]dbus.Variant, *dbus.Error) {
 		"SavedNetworks":         dbus.MakeVariant(st.SavedNetworks),
 		"AirplaneMode":          dbus.MakeVariant(st.AirplaneMode),
 		"CaptivePortalDetected": dbus.MakeVariant(st.CaptivePortalDetected),
+		"CaptivePortalURL":      dbus.MakeVariant(st.CaptivePortalURL),
 		"HotspotActive":         dbus.MakeVariant(st.HotspotActive),
 		"ConnectionType":        dbus.MakeVariant(st.ConnectionType),
 		"Band":                  dbus.MakeVariant(state.FrequencyToBand(st.Frequency)),

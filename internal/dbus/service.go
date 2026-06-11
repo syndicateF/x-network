@@ -114,6 +114,7 @@ func (s *Service) emitPropertiesChanged(st *state.State) {
 		"TrafficOut":            dbus.MakeVariant(st.TrafficOut),
 		"AirplaneMode":          dbus.MakeVariant(st.AirplaneMode),
 		"CaptivePortalDetected": dbus.MakeVariant(st.CaptivePortalDetected),
+		"CaptivePortalURL":      dbus.MakeVariant(st.CaptivePortalURL),
 		"HotspotActive":         dbus.MakeVariant(st.HotspotActive),
 	}
 
@@ -201,6 +202,7 @@ func (s *Service) properties() []introspect.Property {
 		{Name: "SavedNetworks", Type: "as", Access: "read"},
 		{Name: "AirplaneMode", Type: "b", Access: "read"},
 		{Name: "CaptivePortalDetected", Type: "b", Access: "read"},
+		{Name: "CaptivePortalURL", Type: "s", Access: "read"},
 		{Name: "HotspotActive", Type: "b", Access: "read"},
 		{Name: "ConnectionType", Type: "s", Access: "read"},
 		{Name: "Band", Type: "s", Access: "read"},

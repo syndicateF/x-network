@@ -2,14 +2,13 @@ package iwd
 
 import (
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"x-network/internal/captive"
 	"x-network/internal/state"
 
 	"github.com/godbus/dbus/v5"
@@ -441,8 +440,14 @@ func (c *Client) handleStationChange(props map[string]dbus.Variant) {
 				}
 
 				// === Captive Portal Auto-Detection ===
-				// Wait for DHCP/routing to settle before checking
-				time.Sleep(2 * time.Second)
+				// Wait for IP assignment (max 5s, poll 500ms) instead of fixed sleep
+				for i := 0; i < 10; i++ {
+					if c.stateMgr.Get().IpAddress != "" {
+						break
+					}
+					time.Sleep(500 * time.Millisecond)
+				}
+				time.Sleep(500 * time.Millisecond) // settle after IP assigned
 
 				// Get current state for verification
 				st := c.stateMgr.Get()
@@ -461,9 +466,9 @@ func (c *Client) handleStationChange(props map[string]dbus.Variant) {
 					return
 				}
 
-				// Perform captive portal check
+				// Perform captive portal check using shared package
 				log.Printf("Checking captive portal for SSID: %s", connectedSSID)
-				detected, url := checkCaptivePortal()
+				detected, url := captive.Check()
 
 				// Update state with results
 				c.stateMgr.Update(func(st *state.State) {
@@ -474,6 +479,8 @@ func (c *Client) handleStationChange(props map[string]dbus.Variant) {
 
 				if detected {
 					log.Printf("Captive portal detected! URL: %s", url)
+					// Start recheck goroutine for auto-clearing
+					go c.captivePortalRecheck(connectedSSID)
 				} else {
 					log.Printf("No captive portal detected")
 				}
@@ -1022,53 +1029,41 @@ func (c *Client) tryUsbFallback(ifaceName string) {
 	})
 }
 
-// checkCaptivePortal checks for captive portal by HTTP probe
-// Returns detected=true if captive portal is present, with redirect URL if available
-func checkCaptivePortal() (detected bool, url string) {
-	// Use common captive portal detection endpoints
-	endpoints := []string{
-		"http://detectportal.firefox.com/success.txt",
-		"http://www.gstatic.com/generate_204",
-		"http://captive.apple.com/hotspot-detect.html",
+// captivePortalRecheck periodically rechecks captive portal status after detection.
+// Uses exponential-ish backoff: 10s, 20s, 30s, 30s, 30s (~2 min total).
+// Auto-clears CaptivePortalDetected + CaptivePortalURL when portal is resolved.
+// Exits early if disconnected or SSID changes.
+func (c *Client) captivePortalRecheck(ssid string) {
+	delays := []time.Duration{
+		10 * time.Second,
+		20 * time.Second,
+		30 * time.Second,
+		30 * time.Second,
+		30 * time.Second,
 	}
 
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// Capture redirect URL
-			url = req.URL.String()
-			return http.ErrUseLastResponse
-		},
+	for _, delay := range delays {
+		time.Sleep(delay)
+
+		st := c.stateMgr.Get()
+		// Exit early: disconnected, SSID changed, or already cleared
+		if st.ConnectionState != state.StateConnected || st.ActiveSSID != ssid || !st.CaptivePortalDetected {
+			return
+		}
+
+		detected, url := captive.Check()
+		if !detected {
+			c.stateMgr.Update(func(st *state.State) {
+				st.CaptivePortalDetected = false
+				st.CaptivePortalURL = ""
+			})
+			log.Printf("Captive portal cleared for SSID: %s", ssid)
+			return
+		}
+		// Update URL in case portal changed its redirect
+		c.stateMgr.Update(func(st *state.State) {
+			st.CaptivePortalURL = url
+		})
 	}
-
-	for _, endpoint := range endpoints {
-		resp, err := client.Get(endpoint)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		// Check for redirect (captive portal)
-		if resp.StatusCode == 302 || resp.StatusCode == 301 {
-			return true, url
-		}
-
-		// Check content for Firefox endpoint
-		if strings.Contains(endpoint, "firefox") {
-			body, _ := io.ReadAll(resp.Body)
-			if !strings.Contains(string(body), "success") {
-				return true, endpoint
-			}
-		}
-
-		// Check for 204 (Google endpoint)
-		if strings.Contains(endpoint, "generate_204") && resp.StatusCode != 204 {
-			return true, endpoint
-		}
-
-		// Got expected response - no captive portal
-		return false, ""
-	}
-
-	return false, ""
+	log.Printf("Captive portal recheck exhausted for SSID: %s", ssid)
 }

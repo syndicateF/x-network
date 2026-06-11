@@ -3,6 +3,7 @@ package dbus
 import (
 	"log"
 	"os/exec"
+	"x-network/internal/captive"
 	"x-network/internal/state"
 
 	"github.com/godbus/dbus/v5"
@@ -254,7 +255,7 @@ func (s *Service) SetAirplaneMode(enabled bool) (bool, *dbus.Error) {
 
 // CheckCaptivePortal checks for captive portal
 func (s *Service) CheckCaptivePortal() (bool, *dbus.Error) {
-	detected, url := checkCaptivePortal()
+	detected, url := captive.Check()
 
 	s.stateMgr.Update(func(st *state.State) {
 		st.CaptivePortalDetected = detected
